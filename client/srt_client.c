@@ -242,7 +242,7 @@ int srt_client_send(int sockfd, void* data, unsigned int length)
   	return -1;
   }
   // Prevent calling srt_client_send before srt_client_connect
-  if (tp -> client_portNum <= 0 || tp -> svr_portNum <= 0) {
+  if (tp -> client_portNum <= 0 || tp -> svr_portNum <= 0 || length == 0) {
   	printf("Fail to send, client and server port Unkown, sockfd = %d\n", sockfd);
   	return -1;
   }
@@ -251,41 +251,41 @@ int srt_client_send(int sockfd, void* data, unsigned int length)
   	return -1;
   }
   int seg_num = length / MAX_SEG_LEN;
-  
   // Append new buffers & Create a sendbuf_timer for the first time
-  // TODO: Seperate data by Max segment length!!!
-  segBuf_t* buf;
-  buf = create_buf(tp, data, length);
-  pthread_mutex_lock(tp -> bufMutex);
 
-  if (tp -> next_seqNum == 0) {
-	tp -> sendBufHead = buf;
-	tp -> sendBufunSent = buf;
-	tp -> sendBufTail = buf;
-	tp -> next_seqNum += length;
+pthread_mutex_lock(tp -> bufMutex);
+	for (int i = 0; i <= seg_num; ++i) {
+	  segBuf_t* buf;
+	  buf = create_buf(tp, data + i * MAX_SEG_LEN, min(length - i * MAX_SEG_LEN, MAX_SEG_LEN));
 
-  	pthread_t pid;
-  	int err = pthread_create(&pid, NULL, sendBuf_timer, tp);
-  }
-  else {
-	tp -> sendBufTail -> next = buf;
-	tp -> sendBufTail = buf; 
-	if (tp -> sendBufunSent == NULL) {
+	  if (tp -> next_seqNum == 0) {
+		tp -> sendBufHead = buf;
 		tp -> sendBufunSent = buf;
-	}
-  }
-	pthread_mutex_unlock(tp -> bufMutex);
+		tp -> sendBufTail = buf;
+		tp -> next_seqNum += length;
 
+	  	pthread_t pid;
+	  	int err = pthread_create(&pid, NULL, sendBuf_timer, tp);
+	  }
+	  else {
+		tp -> sendBufTail -> next = buf;
+		tp -> sendBufTail = buf; 
+		if (tp -> sendBufunSent == NULL) {
+			tp -> sendBufunSent = buf;
+		}
+	  }
+	}
 // Send n buffers smaller than window size
 	while (tp -> unAck_segNum < GBN_WINDOW && tp -> sendBufunSent != NULL) {
 		if (snp_sendseg(tcp_socknum, tp -> sendBufunSent -> seg) < 0) {
-          printf("Sending data failed sockfd= %d\n",sockfd);
+          printf("Sending data failed sockfd = %d\n",sockfd);
+          return -1;
         }
         tp -> sendBufunSent -> sentTime = time(0);
-        tp -> sendBufunSent -> 
+        tp -> sendBufunSent = tp -> sendBufunSent -> next;
+        tp -> unAck_segNum ++;
 	}
-
-
+  pthread_mutex_unlock(tp -> bufMutex);
   return 1;
 }
 
@@ -499,6 +499,11 @@ void *seghandler(void* arg)
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 void* sendBuf_timer(void* clienttcb)
 {
-
+while (1) {
+	while(clienttcb -> unAck_segNum == 0 && client_tcb -> sendBufunSent == NULL) {
+		
+		
+	}
+}
   return 0;
 }
