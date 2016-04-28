@@ -9,6 +9,9 @@
 //       April 26, 2008 **Added GBN descriptions
 //
 
+// TODO: syn ack all have ack and request numbers
+
+
 #include "srt_server.h"
 svr_tcb_t* svr_tcb_table[MAX_TRANSPORT_CONNECTIONS];  /* number of allowed client connections*/
 int tcp_socknum = -1;  // Socket number from TCP protocal
@@ -58,6 +61,14 @@ void srt_server_init(int conn)
 }
 
 
+void server_create_buf(svr_tcb_t* servertcb){
+	svr_tcb_t* tp = servertcb;
+	char* buf = (char*) malloc(RECEIVE_BUF_SIZE);
+	assert(buf != NULL);
+	tp -> recvBuf = buf;
+	return;
+}
+
 // This function looks up the client TCB table to find the first NULL entry, and creates
 // a new TCB entry using malloc() for that entry. All fields in the TCB are initialized 
 // e.g., TCB state is set to CLOSED and the server port set to the function call parameter 
@@ -79,7 +90,22 @@ int srt_server_sock(unsigned int port)
       svr_tcb_table[i] = tp;
       tp -> svr_portNum = port;   /*Set original port*/
       tp -> state = CLOSED;
+      tp -> expect_seqNum = 0;
+
       printf("Sevrer: TCB socket=%d created successfully\n",sockfd);
+      
+      // 1 Multiple thread lock for each; 
+	  pthread_mutex_t* lock = (pthread_mutex_t*) malloc(sizeof(pthread_mutex_t));
+	  assert(lock != NULL);
+	  pthread_mutex_init(lock, NULL);
+	  tp -> bufMutex = lock;
+
+	  // 2 Create buffer;   
+      server_create_buf(tp);
+
+      // 3 State CHANGE 
+      tp -> state = CLOSED;
+      tp -> usedBufLen = 0;
       return sockfd;
     }
   }
@@ -119,7 +145,8 @@ int srt_server_accept(int sockfd)
     case CLOSED:
     	tp -> state = LISTENING;
     	while(tp ->state != CONNECTED) {
-
+    		//TODO: wait time ACCEPT_POLLING_INTERVAL
+    		...
     	}	
     	printf("Server: server sockfd=%d accept successful\n", sockfd);
     	return 1;
@@ -146,6 +173,41 @@ int srt_server_accept(int sockfd)
 //
 int srt_server_recv(int sockfd, void* buf, unsigned int length)
 {
+  svr_tcb_t *tp;
+  tp = gettcb(sockfd);
+  if (!tp) {
+    printf("Server: Can't find svrtcb in server_recv sockfd=%d\n", sockfd);
+      return -1;
+  }
+  switch(tp -> state) {
+  	case CLOSED:
+  		return -1;
+  	case LISTENING:
+  		return -1;
+  	case CONNECTED: {
+  		// Wait for getting enough data in buffer and store them into the recBuf
+  		// Get fragment by fragment
+  		while(1) {
+  			if (tp -> usedBufLen < length) {
+  				sleep(RECVBUF_POLLING_INTERVAL;)
+  			}
+  			else {
+  				pthread_mutex_lock(tp -> bufMutex);
+  				// Copy length bytes
+  				char* temp = buf;
+  				memcpy(temp, tp -> recvBuf, length);  // Send data to the target buffer
+  				memcpy(tp -> recBuf, tp -> recBuf + length, tp-> usedBufLen - length);  // Put the unsent char intot the recvBuf
+  				tp -> usedBufLen  -= length;
+  				pthread_mutex_unlock(tp -> bufMutex);
+  			}
+  		}
+  		return 1;
+  	}
+  	case CLOSEWAIT:
+  		return -1;
+  	default:
+  		return -1;
+  }
   return 0;
 }
 
@@ -158,7 +220,7 @@ int srt_server_recv(int sockfd, void* buf, unsigned int length)
 //
 int srt_server_close(int sockfd)
 {
-  // TODO: Free tcb entry
+
   svr_tcb_t *tp;
   tp = gettcb(sockfd);
   if (!tp) {
@@ -167,6 +229,8 @@ int srt_server_close(int sockfd)
   }
   switch(tp -> state) {
     case CLOSED:
+      free(tp -> recvBuf);
+      free(tp -> bufMutex);
       free(svr_tcb_table[sockfd]);
       svr_tcb_table[sockfd] = NULL;
       return 1;
@@ -190,6 +254,19 @@ void* closewait(void* tcb) {
   pthread_exit(NULL);
 }
 
+
+void restore_data(svr_tcb_t* tp, seg_t* seg) {
+	// Data amount can't exceed the buffer size
+	if (tp -> usedBufLen < RECEIVE_BUF_SIZE - seg -> header.length){
+		pthread_mutex_lock(tp -> bufMutex);
+		memcpy(tp -> recvBuf + tp - >usedBufLen, seg -> data, seg -> header.length);
+		tp -> usedBufLen += seg -> header.length;
+		//Update tp -> expect_seqNum 
+		tp -> expect_seqNum =  seg->header.seq_num + seg->header.length;
+		pthread_mutex_unlock(tp -> bufMutex);
+	}
+	printf("Receive Buf SIZE NOT ENOUGH, DATA Saving to recvBuf failed\n");
+}
 // This is a thread  started by srt_server_init(). It handles all the incoming 
 // segments from the client. The design of seghanlder is an infinite loop that calls snp_recvseg(). If
 // snp_recvseg() fails then the overlay connection is closed and the thread is terminated. Depending
@@ -209,8 +286,8 @@ void* seghandler(void* arg)
     // Find the right server
     tp = NULL;
     if (snp_recvseg(tcp_socknum,seg) != 1) {
-      close(tcp_socknum);
-          pthread_exit(NULL);
+      	close(tcp_socknum);
+        pthread_exit(NULL);
     }
 
     // Get socketfd by port
@@ -235,13 +312,16 @@ void* seghandler(void* arg)
       case CLOSED:
           printf("Server: sockfd=%d received seg in CLOSED\n", sockfd);
         break;
-      case LISTENING:
+      case LISTENING: {
         if(seg->header.type == SYN) {
           tp->client_portNum = seg->header.src_port;
           tp->state=CONNECTED;
           printf("Server:sockfd = %d Got SYN from client\n", sockfd);
           
+          // Set tcb expect_seqNum
+          tp -> expect_seqNum = seg->header.seq_num;
           // memset(&ack,0, sizeof(ack));
+          // Received SYN and send SYNACK back
           ack->header.type = SYNACK;
           ack->header.src_port = tp -> svr_portNum;
           ack->header.dest_port = tp -> client_portNum;
@@ -252,22 +332,39 @@ void* seghandler(void* arg)
         else
           printf("Server: Listening received SYN\n");
         break;
+   	 }
       case CONNECTED: 
       {
         switch (seg->header.type) {
           printf("Server: tp %d: receive %d\n", sockfd, seg->header.type);
           case SYN:
           {
-            // send SYNACK
+            // Received SYN and send SYNACK back
             // seg_t ack;
             // memset(&ack,0, sizeof(ack));
+          	tp -> expect_seqNum = seg->header.seq_num;
+
             ack->header.type = SYNACK;
             ack->header.src_port = tp -> svr_portNum;
             ack->header.dest_port = tp -> client_portNum;
             ack->header.length = 0;
             snp_sendseg(tcp_socknum, ack);
-
             break;            
+          }
+          case DATA: {
+          	if (seg -> header.seq_num == tp -> expect_seqNum){
+          		// Update tp -> expect_seqNum and store data in tp -> recvBuf 
+          		restore_data(tp, seg);
+
+          		// Send ack back
+          		ack->header.type = DATAACK;
+            	ack->header.src_port = tp -> svr_portNum;
+            	ack->header.dest_port = tp -> client_portNum;
+            	ack->header.length = 0;
+            	ack->header.ack_num = tp -> expect_seqNum;  // Send the new expect_seqNum(added by data length) 
+            	snp_sendseg(tcp_socknum, ack);
+          	}
+          	break;
           }
           case FIN:
           {
@@ -285,10 +382,9 @@ void* seghandler(void* arg)
 
             tp->state = CLOSEWAIT;
 
-            // start a thread for CLOSE_WAIT_TIMEOUT
+            // start a thread for CLOSE_WAIT_TIMEOUT; If time expires, Set tp state as CLOSED  
             pthread_t closetimer;
             pthread_create(&closetimer,NULL,closewait, (void*)tp);
-
             break;                    
           }
           default:

@@ -102,7 +102,7 @@ int srt_client_sock(unsigned int client_port)
 	      // tp -> sendBufunSent = malloc(sizeof(segBuf_t));
 	      // tp -> sendBufTail = malloc(sizeof(segBuf_t));
   		 
-	      // Initial tp->bufMutex 
+	      // Mutex: Initial tp->bufMutex 
         pthread_mutex_t* lock;
         lock = (pthread_mutex_t*) malloc(sizeof(pthread_mutex_t));
         assert(lock!=NULL);
@@ -163,6 +163,7 @@ int srt_client_connect(int socked, unsigned int server_port)
       syn->header.src_port = tp -> client_portNum; /*Todo: Must set src port before hand; in src_client_sock*/
       syn->header.dest_port = tp ->svr_portNum;
       syn->header.length = 0; /*No DATA sent*/
+      syn->header.seq_num = 0;
 
       // Send seg_t and state transform; connetion is the TCP socket number;
       if (snp_sendseg(tcp_socknum, syn) > 0) {
@@ -263,21 +264,27 @@ int srt_client_send(int sockfd, void* data, unsigned int length)
 	for (int i = 0; i <= seg_num; ++i) {
 	  segBuf_t* buf;
     pthread_mutex_lock(tp -> bufMutex);
-	  buf = create_buf(tp, data + i * MAX_SEG_LEN, min(length - i * MAX_SEG_LEN, MAX_SEG_LEN));
 	  if (tp -> next_seqNum == 0) {
-  		tp -> sendBufHead = buf;
+      buf = create_buf(tp, data + i * MAX_SEG_LEN, max(min(length - i * MAX_SEG_LEN, MAX_SEG_LEN),0));
+  	  tp -> next_seqNum += length;
+
+    	tp -> sendBufHead = buf;
   		tp -> sendBufunSent = buf;
   		tp -> sendBufTail = buf;
-  		tp -> next_seqNum += length;
       tp -> sentTime = 0;
       // TODO: Risks ???
 	  	// pthread_t pid;
 	  	// int err = pthread_create(&pid, NULL, sendBuf_timer, tp);
 	   }
 	  else {
-      tp -> sentTime = 0;
+      // Create buffer and set next_seqNum
+      buf = create_buf(tp, data + i * MAX_SEG_LEN, max(min(length - i * MAX_SEG_LEN, MAX_SEG_LEN),0));
+      tp -> next_seqNum += length;
+
+
   		tp -> sendBufTail -> next = buf;
   		tp -> sendBufTail = buf; 
+      tp -> sentTime = 0;
   		if (tp -> sendBufunSent == NULL) {
   			tp -> sendBufunSent = buf;
 		  }
