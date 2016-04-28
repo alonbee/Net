@@ -142,14 +142,20 @@ int srt_server_accept(int sockfd)
   }
   printf("Server: Ready to accept\n");
   switch (tp -> state) {
-    case CLOSED:
+    case CLOSED: {
     	tp -> state = LISTENING;
+    	
+    	// Check tp state periodically and wait for ACCEPT_POLLING_INTERVAL
+    	static struct timespec accept_wait_time;
+    	accept_wait_time.tv_sec = 0;
+    	accept_wait_time.tv_nsec = ACCEPT_POLLING_INTERVAL; 
     	while(tp ->state != CONNECTED) {
     		//TODO: wait time ACCEPT_POLLING_INTERVAL
-    		...
+    		nanosleep(accept_wait_time);
     	}	
     	printf("Server: server sockfd=%d accept successful\n", sockfd);
     	return 1;
+    }
     case LISTENING:
       return -1;
     case CONNECTED:

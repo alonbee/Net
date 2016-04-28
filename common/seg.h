@@ -8,7 +8,6 @@
 //       April 21, 2008 **Added more detailed description of prototypes fixed ambiguities** ATC
 //       April 26, 2008 **Added checksum descriptions**
 //
-// TODO: syn ack all have ack and request numbres 
 
 
 #ifndef SEG_H

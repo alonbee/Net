@@ -189,9 +189,9 @@ int srt_client_connect(int socked, unsigned int server_port)
           }
           else {
             // snp_sendseg(tcp_socknum,syn);
-        if (snp_sendseg(tcp_socknum, syn) < 0) {
-          printf("SYN sent failed for sockfd =%d\n",sockfd);
-        }
+            if (snp_sendseg(tcp_socknum, syn) < 0) {
+                printf("SYN sent failed for sockfd =%d\n",sockfd);
+            }
           // time_begin = clock();
             entry ++;
             nanosleep(&syn_wait_time, NULL);
