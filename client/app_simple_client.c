@@ -50,11 +50,16 @@ int overlay_start() {
 	servaddr.sin_port = htons(OVERLAY_PORT);
 
 	out_conn = socket(AF_INET,SOCK_STREAM,0);
-	if(out_conn<0) {
+	printf("out_conn =%d\n", out_conn);
+	if(out_conn <0) {
+		printf("Exit here%s\n");
 		return -1;
 	}
-	if(connect(out_conn, (struct sockaddr*)&servaddr, sizeof(servaddr))<0)
+
+	if(connect(out_conn, (struct sockaddr*)&servaddr, sizeof(servaddr))<0){
+		printf("Connection error\n");		
 		return -1;
+	}
 	return out_conn;
 
 }

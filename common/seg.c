@@ -126,7 +126,7 @@ int snp_recvseg(int connection, seg_t* segPtr)
                     continue;
                 }
                 // Checksum check in transmission level
-                if (checkchecksum((seg_t* )buf) == -1){
+                if (checkchecksum((seg_t* )buf) < 0){
                 	printf("Checksum error");
                 	continue;
                 }
@@ -182,27 +182,57 @@ int seglost(seg_t* segPtr) {
 //use 1s complement for checksum calculation
 unsigned short checksum(seg_t* segment)
 {
-  segment->header.checksum = 0;
-  unsigned short rst; 
-  unsigned short* seg = (unsigned short*)segment;
-  // Get all data into checksum data source
-  int sz = sizeof(segment -> header);
-  if (segment->header.type == DATA) {
-  	sz += segment->header.length;
-  }
-  // Implement checksum algorithm
-  while(sz > 1) {
-  	rst += *seg;
-  	seg++;
-  	sz -= 2;
-  }
-  if (sz) {
-  	rst += *seg;
-  }
-  while(rst >> 16){
-  	rst = (rst >>16) + (rst & 0xffff);
-  }
-  return (unsigned short)(~rst);
+  // segment->header.checksum = 0;
+  // unsigned short rst; 
+  // unsigned short* seg = (unsigned short*)segment;
+  // // Get all data into checksum data source
+  // int sz = sizeof(segment -> header);
+  // if (segment->header.type == DATA) {
+  // 	sz += segment->header.length;
+  // }
+  // // Implement checksum algorithm
+  // while(sz > 1) {
+  // 	rst += *seg;
+  // 	seg++;
+  // 	sz -= 2;
+  // }
+  // if (sz) {
+  // 	rst += *seg;
+  // }
+  // while(rst >> 16){
+  // 	rst = (rst >>16) + (rst & 0xffff);
+  // }
+  // return (unsigned short)(~rst);
+	segment->header.checksum = 0;
+	int count;
+	if (segment->header.type == DATA) {
+		count = sizeof(seg_t);
+	} else {
+		count = sizeof(srt_hdr_t);
+	}
+	/* Compute Internet Checksum for "count" bytes
+	*         beginning at location "addr". From the RFC the assignment page linked to
+	*/
+	unsigned short *buf = (unsigned short *)segment;
+	unsigned long sum = 0;
+
+	while( count > 1 )  {
+	   /*  This is the inner loop */
+	       sum += *(buf++);
+	       count -= 2;
+	}
+
+	   /*  Add left-over byte, if any */
+	if( count > 0 )
+	       sum += *(unsigned int *)buf;
+
+	   /*  Fold 32-bit sum to 16 bits */
+	   sum = (sum & 0xFFFF) + (sum >> 16);
+	   sum += sum >> 16;
+	
+	//printf("checksum: %hu for data %s\n", (unsigned short)~sum, segment->data);
+	return (unsigned short)~sum;
+
 }
 
 //check the checksum in the segment,
@@ -210,6 +240,38 @@ unsigned short checksum(seg_t* segment)
 //return -1 if the checksum is invalid
 int checkchecksum(seg_t* segment)
 {
-  unsigned short rst = checksum(segment);
-  return rst == 0 ? 1:-1;
+  // unsigned short rst = checksum(segment);
+  // return rst == 0 ? 1:-1;
+	int count;
+	if (segment->header.type == DATA) {
+		count = sizeof(seg_t);
+	} else {
+		count = sizeof(srt_hdr_t);
+	}
+	/* Compute Internet Checksum for "count" bytes
+	*         beginning at location "addr". From the RFC the assignment page linked to
+	*/
+	unsigned short *buf = (unsigned short *)segment;
+	unsigned long sum = 0;
+
+	while( count > 1 )  {
+	   /*  This is the inner loop */
+	       sum += *(buf++);
+	       count -= 2;
+	}
+
+	   /*  Add left-over byte, if any */
+	if( count > 0 )
+	       sum += *(unsigned int *)buf<<8;
+
+	   /*  Fold 32-bit sum to 16 bits */
+	   sum = (sum & 0xFFFF) + (sum >> 16);
+	   sum += sum >> 16;
+	printf("\nChecksum %s Received Data: %s\n",((unsigned short)~sum == 0) ? "valid" : "NOT valid", segment->data);
+	if ((unsigned short)~sum == 0){
+		return 1;
+	} else {
+		return -1;
+	}
+
 }

@@ -13,6 +13,8 @@
 // Notes: 1 Remember to seperate segment before appending dato to buffer 
 
 
+// BUGS: 1 Shouldn't use memset for struct, allocate memory first: (segBuf_t*) malloc(sizeof(segBuf_t));  
+
 #include "srt_client.h"
 #include <sys/time.h>
 #include <stdlib.h>
@@ -21,7 +23,7 @@
 #include <assert.h>
 #include <sys/socket.h>
 
-//
+
 //  SRT socket API for the client side application. 
 //  ===================================
 //
@@ -156,7 +158,7 @@ int srt_client_connect(int sockfd, unsigned int server_port)
   }
   // Make server port number
   tp-> svr_portNum = server_port;
-  seg_t* syn = (seg_t*) malloc(sizeof(syn));      /*Can't put variable initialization in Switch statement*/ 
+  seg_t* syn = (seg_t*) malloc(sizeof(seg_t));      /*Can't put variable initialization in Switch statement*/ 
 
   printf("Client start connecting, state =%d\n",tp->state);
   switch (tp -> state) {
@@ -178,7 +180,10 @@ int srt_client_connect(int sockfd, unsigned int server_port)
         break;
       }
 
+      pthread_mutex_lock(tp -> bufMutex);
       tp -> state = SYNSENT;
+      pthread_mutex_unlock(tp -> bufMutex);
+
       // Max retry and for timeout;  Select function
       // clock_t time_begin = clock();
       int entry = 0;
@@ -187,7 +192,10 @@ int srt_client_connect(int sockfd, unsigned int server_port)
         // clock_t delta = time_cur - time_begin;
         // if ( (delta * 1.0 / CLOCK_PER_SEC)*1000 > SYNSEG_TIMEOUT_NS /1e6) {
           if (entry > SYN_MAX_RETRY) {
+                pthread_mutex_lock(tp -> bufMutex);
             tp -> state = CLOSED;
+                pthread_mutex_unlock(tp -> bufMutex);
+
             printf("Tp of sockfd =%d  failed to connect after a max try\n", sockfd);
             return -1;
           }
@@ -219,9 +227,8 @@ int srt_client_connect(int sockfd, unsigned int server_port)
 
 
 segBuf_t* create_buf(client_tcb_t* tp, char* data, unsigned int length) {
-	 segBuf_t* buf;
-	 // buf -> seg = malloc(sizeof(seg_t));
-   memset(&(buf -> seg),0,sizeof(buf -> seg));
+	 segBuf_t* buf = (segBuf_t*) malloc(sizeof(segBuf_t));
+
 	 buf -> seg.header.type = DATA;
 	 buf -> seg.header.src_port = tp -> client_portNum;
 	 buf -> seg.header.dest_port = tp -> svr_portNum;
@@ -281,6 +288,7 @@ int sendBuf(client_tcb_t* clienttcb, int sockfd) {
 //
 int srt_client_send(int sockfd, void* data, unsigned int length)
 {
+  printf("Start sending data\n");
   client_tcb_t* tp = gettcb(sockfd);
   if (!tp){
   	printf("can't find client_tcb_t for sockfd = %d\n",sockfd);
@@ -297,18 +305,25 @@ int srt_client_send(int sockfd, void* data, unsigned int length)
   }
   int seg_num = length / MAX_SEG_LEN;
   // Append new buffers & Create a sendbuf_timer for the first time
+  printf("seperate data successfully, seg_num=%d\n",seg_num);
 
 	for (int i = 0; i <= seg_num; ++i) {
 	  segBuf_t* buf;
     pthread_mutex_lock(tp -> bufMutex);
 	  if (tp -> next_seqNum == 0) {
       char* temp = (char*) data;
-      buf = create_buf(tp, &(temp[i*MAX_SEG_LEN]), max(min(length - i * MAX_SEG_LEN, MAX_SEG_LEN),0));
-  	  tp -> next_seqNum += length;
+      int len = max(min(length - i * MAX_SEG_LEN, MAX_SEG_LEN),0);
+            printf("Ready to create buffer,len=%d\n",len);
+
+      buf = create_buf(tp, &(temp[i*MAX_SEG_LEN]),len);
+  	  printf("Buffer created\n");
+
+      tp -> next_seqNum += length;
 
     	tp -> sendBufHead = buf;
   		tp -> sendBufunSent = buf;
   		tp -> sendBufTail = buf;
+      printf("Initialize sendBuf successfully\n");
       // TODO: Risks ???
 	  	// pthread_t pid;
 	  	// int err = pthread_create(&pid, NULL, sendBuf_timer, tp);
@@ -513,6 +528,7 @@ void *seghandler(void* arg)
   while(1) {
     tp = NULL;
     if (snp_recvseg(tcp_socknum, seg) != 1) {
+      printf("snp_recvseg received nothing, exit\n");
       close(tcp_socknum);
       pthread_exit(NULL);
     }
@@ -529,6 +545,7 @@ void *seghandler(void* arg)
     		break;
     	}
     }
+    printf("sockfd=%d Receied Seg type=%d\n",sockfd,seg->header.type );
     // // Find socket fd for giving dest_port
     // for (int i = 0; i < MAX_TRANSPORT_CONNECTIONS; ++i)
     // {
@@ -562,6 +579,7 @@ void *seghandler(void* arg)
       case CONNECTED: {
         printf("sockfd=%d received=%d in CONNECTED\n",sockfd,seg->header.type);
         if (seg->header.type == DATAACK) {
+          printf("seg seq_num=%d\n", seg->header.seq_num);
           if (tp -> sendBufHead != NULL && seg->header.ack_num >= tp -> sendBufHead-> seg.header.seq_num) {
             // Receive seg ack larger than head seq_num, remove acked buffer from linked list
             sendBuf_recvACK(tp,seg->header.ack_num);

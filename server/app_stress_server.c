@@ -1,4 +1,4 @@
-f//FILE: server/app_stress_server.c
+//FILE: server/app_stress_server.c
 
 //Description: this is the stress server application code. The server first starts the overlay by creating a direct TCP link between the client and the server. Then it initializes the SRT server by calling srt_svr_init(). It creates a sockets and waits for connection from the client by calling srt_svr_sock() and srt_svr_connect(). It then receives the length of the file to be received. After that, it creates a buffer, receives the file data and saves the file data to receivedtext.txt file. Finally the server closes the socket by calling srt_server_close(). Overlay is stopped by calling overlay_end().
 
@@ -8,7 +8,6 @@ f//FILE: server/app_stress_server.c
 
 //Output: SRT server states
 
-#include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>

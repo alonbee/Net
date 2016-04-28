@@ -72,6 +72,7 @@ void server_create_buf(svr_tcb_t* servertcb){
 	char* buf = (char*) malloc(RECEIVE_BUF_SIZE);
 	assert(buf != NULL);
 	tp -> recvBuf = buf;
+  printf("server tcb buffer created successfully\n");
 	return;
 }
 
@@ -297,6 +298,7 @@ void* seghandler(void* arg)
     // Find the right server
     tp = NULL;
     if (snp_recvseg(tcp_socknum,seg) != 1) {
+        printf("Can't receive data in server, ready to close\n");
       	close(tcp_socknum);
         pthread_exit(NULL);
     }
@@ -313,6 +315,8 @@ void* seghandler(void* arg)
           }
         }
 
+      printf("Server sockfd =%d,Received seg header type =%d\n",sockfd,seg->header.type);
+
       if (!tp){
       printf("Server: Can't get server_tcp for the seg\n");
       continue;
@@ -325,12 +329,15 @@ void* seghandler(void* arg)
         break;
       case LISTENING: {
         if(seg->header.type == SYN) {
+          pthread_mutex_lock(tp -> bufMutex);
           tp->client_portNum = seg->header.src_port;
           tp->state=CONNECTED;
           printf("Server:sockfd = %d Got SYN from client\n", sockfd);
           
           // Set tcb expect_seqNum
           tp -> expect_seqNum = seg->header.seq_num;
+          pthread_mutex_unlock(tp -> bufMutex);
+
           // memset(&ack,0, sizeof(ack));
           // Received SYN and send SYNACK back
           ack->header.type = SYNACK;
@@ -353,7 +360,9 @@ void* seghandler(void* arg)
             // Received SYN and send SYNACK back
             // seg_t ack;
             // memset(&ack,0, sizeof(ack));
+            pthread_mutex_lock(tp -> bufMutex);
           	tp -> expect_seqNum = seg->header.seq_num;
+            pthread_mutex_unlock(tp -> bufMutex);
 
             ack->header.type = SYNACK;
             ack->header.src_port = tp -> svr_portNum;

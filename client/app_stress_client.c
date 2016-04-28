@@ -53,6 +53,7 @@ int overlay_start() {
 	}
 	if(connect(out_conn, (struct sockaddr*)&servaddr, sizeof(servaddr))<0)
 		return -1;
+	printf("Overlay created successfully\n");
 	return out_conn;
 }
 
