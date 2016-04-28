@@ -10,6 +10,14 @@
 //
 
 
+#include <time.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <sys/socket.h>
+#include <assert.h>
+#include <unistd.h>
+#include <string.h>
+
 #include "srt_server.h"
 svr_tcb_t* svr_tcb_table[MAX_TRANSPORT_CONNECTIONS];  /* number of allowed client connections*/
 int tcp_socknum = -1;  // Socket number from TCP protocal
@@ -131,7 +139,7 @@ svr_tcb_t* gettcb(int sockfd) {
 //
 int srt_server_accept(int sockfd)
 {
-  svr_tcb_t*tp = malloc(sizeof(svr_tcb_t));
+  svr_tcb_t* tp;
 
   tp = gettcb(sockfd);
   if (!tp) {
@@ -148,7 +156,7 @@ int srt_server_accept(int sockfd)
     	accept_wait_time.tv_sec = 0;
     	accept_wait_time.tv_nsec = ACCEPT_POLLING_INTERVAL; 
     	while(tp ->state != CONNECTED) {
-    		nanosleep(accept_wait_time);
+    		nanosleep(&accept_wait_time, NULL);
     	}	
     	printf("Server: server sockfd=%d accept successful\n", sockfd);
     	return 1;
@@ -192,14 +200,14 @@ int srt_server_recv(int sockfd, void* buf, unsigned int length)
   		// Get fragment by fragment
   		while(1) {
   			if (tp -> usedBufLen < length) {
-  				sleep(RECVBUF_POLLING_INTERVAL;)
+  				sleep(RECVBUF_POLLING_INTERVAL);
   			}
   			else {
   				pthread_mutex_lock(tp -> bufMutex);
   				// Copy length bytes
-  				char* temp = buf;
+  				char* temp = (char*) buf;
   				memcpy(temp, tp -> recvBuf, length);  // Send data to the target buffer
-  				memcpy(tp -> recBuf, tp -> recBuf + length, tp-> usedBufLen - length);  // Put the unsent char intot the recvBuf
+  				memcpy(tp -> recvBuf, tp -> recvBuf + length, tp-> usedBufLen - length);  // Put the unsent char intot the recvBuf
   				tp -> usedBufLen  -= length;
   				pthread_mutex_unlock(tp -> bufMutex);
   			}
@@ -251,7 +259,7 @@ int srt_server_close(int sockfd)
 
 void* closewait(void* tcb) {
   svr_tcb_t* tp = (svr_tcb_t*)tcb;
-  sleep(CLOSEWAIT_TIME);
+  sleep(CLOSEWAIT_TIMEOUT);
 
   tp->state = CLOSED;
   pthread_exit(NULL);
@@ -262,7 +270,7 @@ void restore_data(svr_tcb_t* tp, seg_t* seg) {
 	// Data amount can't exceed the buffer size
 	if (tp -> usedBufLen < RECEIVE_BUF_SIZE - seg -> header.length){
 		pthread_mutex_lock(tp -> bufMutex);
-		memcpy(tp -> recvBuf + tp - >usedBufLen, seg -> data, seg -> header.length);
+		memcpy(tp -> recvBuf + tp -> usedBufLen, seg -> data, seg -> header.length);
 		tp -> usedBufLen += seg -> header.length;
 		//Update tp -> expect_seqNum 
 		tp -> expect_seqNum =  seg->header.seq_num + seg->header.length;
@@ -280,10 +288,10 @@ void restore_data(svr_tcb_t* tp, seg_t* seg) {
 //
 void* seghandler(void* arg)
 {
-  seg_t* seg = malloc(sizeof(seg_t));
-  seg_t* ack = malloc(sizeof(seg_t));
+  seg_t* seg = (seg_t*) malloc(sizeof(seg_t));
+  seg_t* ack = (seg_t*) malloc(sizeof(seg_t));
   // memset(&seg, 0, sizeof(seg));
-  svr_tcb_t* tp = malloc(sizeof(svr_tcb_t));
+  svr_tcb_t* tp = (svr_tcb_t*) malloc(sizeof(svr_tcb_t));
 
   while (1) {
     // Find the right server

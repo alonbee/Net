@@ -15,8 +15,12 @@
 
 #include "srt_client.h"
 #include <sys/time.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <assert.h>
+#include <sys/socket.h>
 
-//
 //
 //  SRT socket API for the client side application. 
 //  ===================================
@@ -56,9 +60,9 @@ void srt_client_init(int conn)
 
 
   syn_wait_time.tv_sec = 0;
-  syn_wait_time.tv_nsec = SYNSEG_TIMEOUT_NS;
+  syn_wait_time.tv_nsec = SYN_TIMEOUT;
   fin_wait_time.tv_sec = 0;
-  fin_wait_time.tv_nsec = FINSEG_TIMEOUT_NS;
+  fin_wait_time.tv_nsec = FIN_TIMEOUT;
 
   if (err < 0) 
     printf("Failed to init clien\n");
@@ -142,9 +146,9 @@ client_tcb_t* gettcb(int sockfd) {
 //
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 //
-int srt_client_connect(int socked, unsigned int server_port)
+int srt_client_connect(int sockfd, unsigned int server_port)
 {
-  client_tcb_t *tp = malloc(sizeof(client_tcb_t));
+  client_tcb_t *tp = (client_tcb_t*) malloc(sizeof(client_tcb_t));
   tp = gettcb(sockfd);
   if (!tp) {
     printf("Connect:Can't get client_tcb_t sockfd = %d\n", sockfd);
@@ -152,7 +156,7 @@ int srt_client_connect(int socked, unsigned int server_port)
   }
   // Make server port number
   tp-> svr_portNum = server_port;
-  seg_t* syn = malloc(sizeof(syn));      /*Can't put variable initialization in Switch statement*/ 
+  seg_t* syn = (seg_t*) malloc(sizeof(syn));      /*Can't put variable initialization in Switch statement*/ 
 
   printf("Client start connecting, state =%d\n",tp->state);
   switch (tp -> state) {
@@ -214,9 +218,10 @@ int srt_client_connect(int socked, unsigned int server_port)
 }
 
 
-segBuf_t* create_buf(client_tcb_t* tp, void* data, unsigned int length) {
+segBuf_t* create_buf(client_tcb_t* tp, char* data, unsigned int length) {
 	 segBuf_t* buf;
-	 buf -> seg = malloc(sizeof(seg_t));
+	 // buf -> seg = malloc(sizeof(seg_t));
+   memset(&(buf -> seg),0,sizeof(buf -> seg));
 	 buf -> seg.header.type = DATA;
 	 buf -> seg.header.src_port = tp -> client_portNum;
 	 buf -> seg.header.dest_port = tp -> svr_portNum;
@@ -224,11 +229,43 @@ segBuf_t* create_buf(client_tcb_t* tp, void* data, unsigned int length) {
 	 // TODO: is this assignment right ?
 	 buf -> seg.header.seq_num = tp -> next_seqNum;
 	 buf -> seg.header.ack_num = tp -> next_seqNum + length;
-	 buf -> seg.header.checksum = // TODO: How to calculate checksum?  
-
-	 strncpy(buf -> seg.data, data, length);
+   buf -> sentTime = 0;
+	 strncpy(buf -> seg.data, (char*)data, length);
 	 buf -> next = NULL;
 	 return buf;
+}
+
+// Send buffers in Go-N-Windows
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+int sendBuf(client_tcb_t* clienttcb, int sockfd) {
+  client_tcb_t* tp = clienttcb;
+  pthread_mutex_lock(tp -> bufMutex);
+  while (tp -> unAck_segNum < GBN_WINDOW && tp -> sendBufunSent != NULL) {
+    // Get current time and write in package 
+
+    // struct timespec tm;
+    // tp -> sendBufunSent -> sentTime = current_utc_time_ns(&tm) / NS_TO_MICROSECONDS;
+    // tp -> sendBufunSent -> sentTime = time(0);
+    struct timeval tm;
+    gettimeofday(&tm, NULL);
+    tp -> sendBufunSent -> sentTime = tm.tv_sec * 1000000 +tm.tv_usec;    // sec to us
+    if (snp_sendseg(tcp_socknum, & (tp -> sendBufunSent -> seg)) < 0) {
+          printf("Sending data failed sockfd = %d\n",sockfd);
+          return -1;
+        }
+      else {
+           printf("Sending data successfully sockfd =%d, seq_num =%d\n",sockfd, tp -> sendBufunSent -> seg.header.seq_num);
+      }
+      // Start monitering timeout event
+      if (tp -> unAck_segNum == 0) {
+              pthread_t pid;
+              int err = pthread_create(&pid, NULL, sendBuf_timer, tp);
+      }
+        tp -> unAck_segNum ++;
+        tp -> sendBufunSent = tp -> sendBufunSent -> next;
+  }
+  pthread_mutex_unlock(tp -> bufMutex);
+  return 1;
 }
 
 
@@ -265,26 +302,25 @@ int srt_client_send(int sockfd, void* data, unsigned int length)
 	  segBuf_t* buf;
     pthread_mutex_lock(tp -> bufMutex);
 	  if (tp -> next_seqNum == 0) {
-      buf = create_buf(tp, data + i * MAX_SEG_LEN, max(min(length - i * MAX_SEG_LEN, MAX_SEG_LEN),0));
+      char* temp = (char*) data;
+      buf = create_buf(tp, &(temp[i*MAX_SEG_LEN]), max(min(length - i * MAX_SEG_LEN, MAX_SEG_LEN),0));
   	  tp -> next_seqNum += length;
 
     	tp -> sendBufHead = buf;
   		tp -> sendBufunSent = buf;
   		tp -> sendBufTail = buf;
-      tp -> sentTime = 0;
       // TODO: Risks ???
 	  	// pthread_t pid;
 	  	// int err = pthread_create(&pid, NULL, sendBuf_timer, tp);
 	   }
 	  else {
       // Create buffer and set next_seqNum
-      buf = create_buf(tp, data + i * MAX_SEG_LEN, max(min(length - i * MAX_SEG_LEN, MAX_SEG_LEN),0));
+      char* temp = (char*) data;
+      buf = create_buf(tp, &(temp[i*MAX_SEG_LEN]), max(min(length - i * MAX_SEG_LEN, MAX_SEG_LEN),0));
       tp -> next_seqNum += length;
-
 
   		tp -> sendBufTail -> next = buf;
   		tp -> sendBufTail = buf; 
-      tp -> sentTime = 0;
   		if (tp -> sendBufunSent == NULL) {
   			tp -> sendBufunSent = buf;
 		  }
@@ -292,46 +328,17 @@ int srt_client_send(int sockfd, void* data, unsigned int length)
     pthread_mutex_unlock(tp -> bufMutex);
 	}
 // Send n buffers smaller than window size
-  if (sendBuf(tp) < 0) {
+  if (sendBuf(tp, sockfd) < 0) {
     printf("fun sendBuf failed\n");
     return -1;
   }
   return 1;
 }
 
-int sendBuf(client_tcb_t* clienttcb) {
-  client_tcb_t* tp = clienttcb;
-  pthread_mutex_lock(tp -> bufMutex);
-  while (tp -> unAck_segNum < GBN_WINDOW && tp -> sendBufunSent != NULL) {
-    // Get current time and write in package 
 
-    // struct timespec tm;
-    // tp -> sendBufunSent -> sentTime = current_utc_time_ns(&tm) / NS_TO_MICROSECONDS;
-    // tp -> sendBufunSent -> sentTime = time(0);
-    struct timeval tm;
-    gettimeofday(&tm, NULL);
-    tp -> sendBufunSent -> sentTime = tm.tv_sec * 1000000 +tm.tv_usec;    // sec to us
-    if (snp_sendseg(tcp_socknum, tp -> sendBufunSent -> seg) < 0) {
-          printf("Sending data failed sockfd = %d\n",sockfd);
-          return -1;
-        }
-      else {
-           printf("Sending data successfully sockfd =%d, seq_num =%d\n",sockfd, tp -> sendBufunSent -> seg.header.seq_num);
-      }
-      // Start monitering timeout event
-      if (tp -> unAck_segNum == 0) {
-              pthread_t pid;
-              int err = pthread_create(&pid, NULL, sendBuf_timer, tp);
-      }
-        tp -> unAck_segNum ++;
-        tp -> sendBufunSent = tp -> sendBufunSent -> next;
-  }
-  pthread_mutex_unlock(tp -> bufMutex);
-  return 1;
-}
 
 void sendBuf_free(client_tcb_t* clienttcb) {
-  client_tcb_t* tp = client_tcb;
+  client_tcb_t* tp = clienttcb;
     pthread_mutex_lock(tp -> bufMutex);
 
     while (tp -> sendBufHead && tp -> sendBufHead != tp -> sendBufTail) {
@@ -368,7 +375,7 @@ int srt_client_disconnect(int sockfd)
     printf("Disconenct: Can't get client_tcb_t sockfd = %d\n", sockfd);
     return -1;
   }
-  seg_t* fin = malloc(sizeof(fin)); 
+  seg_t* fin = (seg_t*)malloc(sizeof(fin)); 
   switch (tp -> state) {
     case CLOSED:
       return -1;
@@ -499,7 +506,7 @@ void sendBuf_recvACK(client_tcb_t* clienttcb, unsigned int ack_num) {
 void *seghandler(void* arg)
 {
   // Get ACK to right sockfd
-  seg_t* seg = malloc(sizeof(seg));
+  seg_t* seg = (seg_t*)malloc(sizeof(seg_t));
   // memset(&seg, 0, sizeof(seg));
   client_tcb_t* tp;
 
@@ -554,11 +561,11 @@ void *seghandler(void* arg)
         break;
       case CONNECTED: {
         printf("sockfd=%d received=%d in CONNECTED\n",sockfd,seg->header.type);
-        if (seg.header.type == DATAACK) {
-          if (tp -> sendBufHead != NULL && seg.header.ack_num >= tp -> sendBufHead-> seg.header.seq_num) {
+        if (seg->header.type == DATAACK) {
+          if (tp -> sendBufHead != NULL && seg->header.ack_num >= tp -> sendBufHead-> seg.header.seq_num) {
             // Receive seg ack larger than head seq_num, remove acked buffer from linked list
-            sendBuf_recvACK(tp,seg.header.ack_num);
-            sendBuf(tp);
+            sendBuf_recvACK(tp,seg->header.ack_num);
+            sendBuf(tp, sockfd);
           }
         }
         break;
@@ -580,7 +587,27 @@ void *seghandler(void* arg)
   return 0;
 }
 
-
+// This function resend all sent but un ack buffers
+//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+void sendBuf_timeout(void* clienttcb){
+  client_tcb_t* tp = (client_tcb_t*) clienttcb;
+  pthread_mutex_lock(tp -> bufMutex);
+  segBuf_t* buf = tp -> sendBufHead;
+  for (int i = 0; i < tp -> unAck_segNum; ++i)
+  {
+    if (buf == NULL){
+      printf("NULL Head in timeout, client port num=%d,i=%d,unAck_segNum=%d\n", tp->client_portNum,i,tp -> unAck_segNum);
+      break;
+    }
+    snp_sendseg(tcp_socknum, &(buf->seg));
+    struct timeval tm;
+    gettimeofday(&tm, NULL);
+    buf -> sentTime = tm.tv_sec*1000000 + tm.tv_usec;
+    buf = buf -> next;
+  }
+  printf("Timeout resend successfully\n");
+  pthread_mutex_unlock(tp -> bufMutex);
+}
 
 // This thread continuously polls send buffer to trigger timeout events
 // It should always be running when the send buffer is not empty
@@ -602,7 +629,7 @@ while (1) {
   segBuf_t* head = tp -> sendBufHead;
   if (head == NULL) {
     printf("Buffer head is NULL,client port num=%d\n",tp -> client_portNum);
-    return;
+    return NULL;
   }
   // Get current time(us) and compare with that of packets
   gettimeofday(&tm,NULL);
@@ -616,24 +643,4 @@ while (1) {
     }
   }
 }
-// This function resend all sent but un ack buffers
-//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-void sendBuf_timeout(void* clienttcb){
-  client_tcb_t* tp = (client_tcb_t*) clienttcb;
-  pthread_mutex_lock(tp -> bufMutex);
-  segBuf_t* buf = tp -> sendBufHead;
-  for (int i = 0; i < tp -> unAck_segNum; ++i)
-  {
-    if (buf == NULL){
-      printf("NULL Head in timeout, client port num=%d,i=%d,unAck_segNum=%d\n", tp->client_portNum,i,tp -> unAck_segNum);
-      break;
-    }
-    snp_sendseg(tcp_socknum, buf->seg);
-    struct timeval tm;
-    gettimeofday(&tm, NULL);
-    buf -> sentTime = tm.tv_sec*1000000 + tm.tv_usec;
-    buf = buf -> next;
-  }
-  printf("Timeout resend successfully\n");
-  pthread_mutex_unlock(tp -> bufMutex);
-}
+

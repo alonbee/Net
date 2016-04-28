@@ -31,16 +31,37 @@
 
 //this function starts the overlay by creating a direct TCP connection between the client and the server. The TCP socket descriptor is returned. If the TCP connection fails, return -1. The TCP socket descriptor returned will be used by SRT to send segments.
 int overlay_start() {
+	int out_conn;
+	struct sockaddr_in servaddr;
+	struct hostent *hostInfo;
 
-  // Your code here.
+	char hostname_buf[50];
+	printf("Enter server name to connect:");
+	scanf("%s",hostname_buf);
+
+	hostInfo = gethostbyname(hostname_buf);
+	if(!hostInfo) {
+		printf("host name error!\n");
+		return -1;
+	}
+
+	servaddr.sin_family =hostInfo->h_addrtype;
+	memcpy((char *) &servaddr.sin_addr.s_addr, hostInfo->h_addr_list[0], hostInfo->h_length);
+	servaddr.sin_port = htons(PORT);
+
+	out_conn = socket(AF_INET,SOCK_STREAM,0);
+	if(out_conn<0) {
+		return -1;
+	}
+	if(connect(out_conn, (struct sockaddr*)&servaddr, sizeof(servaddr))<0)
+		return -1;
+	return out_conn;
 
 }
 
 //this function stops the overlay by closing the TCP connection between the server and the client
 void overlay_stop(int overlay_conn) {
-
-  // Your code here.
-
+	close(overlay_conn);
 }
 
 int main() {
