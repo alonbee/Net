@@ -473,7 +473,7 @@ void sendBuf_recvACK(client_tcb_t* clienttcb, unsigned int ack_num) {
   client_tcb_t* tp = (client_tcb_t*) clienttcb;
   pthread_mutex_lock(tp -> bufMutex);
   // Acked buf's seq_num must be smaller than received ack  
-  // TODO: Clear the tail
+  // TODO: Clear the tail if all packets are ackwonlodged
   if (tp -> sendBufTail -> seg.header.seq_num < ack_num)
     tp -> sendBufTail = 0;
 

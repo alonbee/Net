@@ -41,6 +41,7 @@
 //
 int snp_sendseg(int connection, seg_t* segPtr)
 {
+	
   return 0;
 }
 

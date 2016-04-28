@@ -9,8 +9,6 @@
 //       April 26, 2008 **Added GBN descriptions
 //
 
-// TODO: syn ack all have ack and request numbers
-
 
 #include "srt_server.h"
 svr_tcb_t* svr_tcb_table[MAX_TRANSPORT_CONNECTIONS];  /* number of allowed client connections*/
@@ -150,7 +148,6 @@ int srt_server_accept(int sockfd)
     	accept_wait_time.tv_sec = 0;
     	accept_wait_time.tv_nsec = ACCEPT_POLLING_INTERVAL; 
     	while(tp ->state != CONNECTED) {
-    		//TODO: wait time ACCEPT_POLLING_INTERVAL
     		nanosleep(accept_wait_time);
     	}	
     	printf("Server: server sockfd=%d accept successful\n", sockfd);
@@ -358,18 +355,19 @@ void* seghandler(void* arg)
             break;            
           }
           case DATA: {
+          	// tp -> expect_seqNum will be updated if right; Otherwise, same old expect_seqNum
           	if (seg -> header.seq_num == tp -> expect_seqNum){
           		// Update tp -> expect_seqNum and store data in tp -> recvBuf 
           		restore_data(tp, seg);
-
-          		// Send ack back
+          	}
+          		// Send ack back anayway
           		ack->header.type = DATAACK;
             	ack->header.src_port = tp -> svr_portNum;
             	ack->header.dest_port = tp -> client_portNum;
             	ack->header.length = 0;
-            	ack->header.ack_num = tp -> expect_seqNum;  // Send the new expect_seqNum(added by data length) 
+            	ack->header.ack_num = tp -> expect_seqNum;  // Send the new expect_seqNum(added by data length) if the expect_seqNum is right 
             	snp_sendseg(tcp_socknum, ack);
-          	}
+         
           	break;
           }
           case FIN:
