@@ -45,7 +45,7 @@ int overlay_start() {
 	memset(&tcpserv_addr, 0, sizeof(tcpserv_addr));
 	tcpserv_addr.sin_family = AF_INET;
 	tcpserv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-	tcpserv_addr.sin_port = htons(PORT);
+	tcpserv_addr.sin_port = htons(OVERLAY_PORT);
 
 	if(bind(tcpserv_sd, (struct sockaddr *)&tcpserv_addr, sizeof(tcpserv_addr))< 0)
 		return -1;

@@ -45,7 +45,7 @@ int overlay_start() {
 
 	servaddr.sin_family =hostInfo->h_addrtype;
 	memcpy((char *) &servaddr.sin_addr.s_addr, hostInfo->h_addr_list[0], hostInfo->h_length);
-	servaddr.sin_port = htons(PORT);
+	servaddr.sin_port = htons(OVERLAY_PORT);
 
 	out_conn = socket(AF_INET,SOCK_STREAM,0);
 	if(out_conn<0) {
